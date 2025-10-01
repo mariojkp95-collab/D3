@@ -1,9 +1,11 @@
-/* ===== Barebones RPG — BUILD core3h =====
-   Aggiunge: secondo nemico "ranged" con proiettili e line-of-sight.
-   Mantiene: click-to-move, attacco+CD, melee aggro stabile, EXP/Lv, monete/pozioni, Save/Load/Reset, 🍵 mobile.
+/* ===== Barebones RPG — BUILD core3i =====
+   Patch:
+   - Respawn morbido: non perdi LV/EXP/ATK/CD/coins/potions
+   - Nemico 'ranged' attacca anche adiacente (poke a contatto)
+   Mantiene tutto da core3h (melee+ranged, proiettili, XP/LV, pozioni, Save/Load, 🍵).
 */
 (() => {
-  const BUILD = 'core3h';
+  const BUILD = 'core3i';
   const SAVE_KEY = 'barebones_save_v3';
 
   // DOM
@@ -27,7 +29,7 @@
   }
   genBlocks();
 
-  // Stato giocatore
+  // Giocatore
   const player = {
     x:1,y:1,
     hp:100,maxHp:100,
@@ -38,8 +40,6 @@
   };
 
   // Nemici
-  // - tipo 'melee' (uno già noto)
-  // - tipo 'ranged' (nuovo) con tiro a distanza e kite
   const enemies = [];
   function spawnMelee(x,y){
     return {
@@ -55,15 +55,15 @@
       type:'ranged',
       x,y, hp:40, maxHp:40,
       tick:0, mode:'patrol',
-      atkCd:1200, lastShot:0, // spara ogni ~1.2s
-      rangeMin:3, rangeMax:8, // preferisce distanza media
-      kiteEvery:2, moveTick:0, patrolEvery:10
+      atkCd:1200, lastShot:0, // tiro distanza
+      rangeMin:3, rangeMax:8,
+      kiteEvery:2, moveTick:0, patrolEvery:10,
+      pokeCd:700, lastPoke:0 // nuovo: colpo a contatto
     };
   }
 
   // Oggetti
-  const coins=[], potions=[];
-  const projectiles=[]; // {x,y,dx,dy,spdTick,owner:'ranged', dmg}
+  const coins=[], potions=[], projectiles=[];
 
   // Spawn helpers
   function randEmpty(){
@@ -80,9 +80,8 @@
   // iniziali
   for(let i=0;i<6;i++) coins.push(randEmpty());
   for(let i=0;i<2;i++) potions.push(randEmpty());
-  // un melee e un ranged
   enemies.push(spawnMelee(COLS-2, ROWS-2));
-  const spotR = randEmpty(); enemies.push(spawnRanged(spotR.x, spotR.y));
+  { const s = randEmpty(); enemies.push(spawnRanged(s.x, s.y)); }
 
   // Utilità
   const inside=(x,y)=>x>=0&&y>=0&&x<COLS&&y<ROWS;
@@ -113,7 +112,7 @@
     ctx.save(); ctx.globalAlpha=.25; ctx.fillStyle='#22c55e'; ctx.fillRect(0,0,cv.width,cv.height); ctx.restore();
   }
 
-  // BFS pathfinding
+  // BFS
   function bfs(sx,sy,tx,ty){
     if(!walkable(tx,ty)) return null;
     const q=[{x:sx,y:sy}], prev=new Map(), seen=new Set([`${sx},${sy}`]);
@@ -135,8 +134,7 @@
   }
 
   // Input
-  let pathQueue=[];
-  let lastTapTs=0;
+  let pathQueue=[], lastTapTs=0;
 
   function canvasToTile(ev){
     const r=cv.getBoundingClientRect();
@@ -149,7 +147,6 @@
     return {sx,sy,tx,ty};
   }
 
-  // Hit-test nemico (rettangolo grafico su tile)
   function enemyRect(e){ const x=e.x*TILE+TILE/2-16, y=e.y*TILE+TILE/2-22; return {x,y,w:32,h:36}; }
   function inRect(px,py,r){ return px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h; }
 
@@ -158,14 +155,12 @@
     const {sx,sy,tx,ty}=canvasToTile(ev);
     const now=performance.now();
     const cdReady=(now-player.lastAtk)>=player.atkCd;
-    // attacca se clicchi un nemico adiacente (8-dir)
     const adjEnemy = enemies.find(e => chebyshev(player,e)===1 && inRect(sx,sy,enemyRect(e)));
     if(adjEnemy && cdReady){ attackEnemy(adjEnemy); return; }
     if(cdReady){
       const onTileAdj = enemies.find(e => chebyshev(player,e)===1 && e.x===tx && e.y===ty);
       if(onTileAdj){ attackEnemy(onTileAdj); return; }
     }
-    // movimento
     const p=bfs(player.x,player.y,tx,ty); if(p&&p.length) pathQueue=p;
   });
 
@@ -186,38 +181,36 @@
     if(e.key==='e' || e.key==='E'){ usePotion(); }
   });
 
-  // Floating button (mobile)
+  // Floating button
   if(btnUsePotion){
     btnUsePotion.addEventListener('click', usePotion);
     btnUsePotion.addEventListener('touchend', (e)=>{ e.preventDefault(); usePotion(); }, {passive:false});
   }
 
   // Buttons
-  btnReset.addEventListener('click', resetAll);
+  btnReset.addEventListener('click', hardReset);
   btnSave?.addEventListener('click', saveGame);
   btnLoad?.addEventListener('click', loadGame);
 
-  // Combat
+  // Combat: player → enemy
   function attackEnemy(target){
     const now=performance.now(); player.lastAtk=now;
     const dmg=rndInt(player.atkMin,player.atkMax);
     target.hp=Math.max(0,target.hp-dmg);
     flashHit(target.x,target.y);
     if(target.hp===0){
-      // drop: 70% coin, 30% potion
       if(Math.random()<0.7) coins.push({x:target.x,y:target.y});
       else potions.push({x:target.x,y:target.y});
       gainXP(target.type==='ranged' ? XP_KILL_RANGED : XP_KILL_MELEE);
-      // respawn stesso tipo altrove
       const idx = enemies.indexOf(target);
       enemies.splice(idx,1);
-      const spot=randEmpty();
-      enemies.push(target.type==='ranged' ? spawnRanged(spot.x,spot.y) : spawnMelee(spot.x,spot.y));
+      const s=randEmpty();
+      enemies.push(target.type==='ranged' ? spawnRanged(s.x,s.y) : spawnMelee(s.x,s.y));
     }
     draw();
   }
 
-  // Line of Sight (solo su righe/colonne: controlla blocchi in mezzo)
+  // Line of Sight (ortogonale)
   function hasLoS(ax,ay,bx,by){
     if(ax===bx){
       const step = ay<by?1:-1;
@@ -229,19 +222,17 @@
       for(let x=ax+step; x!==bx; x+=step){ if(map[ay][x]===1) return false; }
       return true;
     }
-    return false; // niente diagonali per LoS semplice
+    return false;
   }
 
-  // Enemy AI (melee + ranged)
+  // Enemy AI
   function enemiesAI(){
     for(const e of enemies){
       if(e.type==='melee'){
-        // aggro
         const dist = manhattan(e, player);
         if(dist<=6) e.mode='chase';
         else if(dist>=10) e.mode='patrol';
-        // stop se adiacente (attacca da fermo)
-        if(chebyshev(player,e)===1) continue;
+        if(chebyshev(player,e)===1) continue; // stop adiacente
         if(e.mode==='chase'){
           e.moveTick = (e.moveTick + 1) % e.chaseEvery;
           if(e.moveTick!==0) continue;
@@ -261,15 +252,28 @@
           }
         }
       } else if(e.type==='ranged'){
-        const dist = manhattan(e, player);
-        // semplice stato: in "aim" se ha LoS e dentro range; altrimenti si muove
-        const inRange = dist>=e.rangeMin && dist<=e.rangeMax && hasLoS(e.x,e.y,player.x,player.y);
+        const distM = manhattan(e, player);
+        const adj8 = chebyshev(e, player)===1;
+
+        // NEW: poke ravvicinato se adiacente (non serve LoS)
+        if(adj8){
+          const now = performance.now();
+          if(now - e.lastPoke >= e.pokeCd){
+            e.lastPoke = now;
+            const dmg = rndInt(5,9);
+            player.hp = Math.max(0, player.hp - dmg);
+            flashHit(player.x,player.y);
+            if(player.hp===0) gameOver();
+          }
+          continue; // niente movimento mentre colpisce ravvicinato
+        }
+
+        // Tiro a distanza se in range e con LoS
+        const inRange = distM>=e.rangeMin && distM<=e.rangeMax && hasLoS(e.x,e.y,player.x,player.y);
         if(inRange){
-          // spara se CD pronto
           const now = performance.now();
           if(now - e.lastShot >= e.atkCd){
             e.lastShot = now;
-            // direzione proiettile (rettilineo orizz/vert)
             let dx=0, dy=0;
             if(e.x===player.x) dy = player.y>e.y ? 1 : -1;
             else if(e.y===player.y) dx = player.x>e.x ? 1 : -1;
@@ -277,29 +281,27 @@
               projectiles.push({x:e.x, y:e.y, dx, dy, spdTick:0, owner:'ranged', dmg:rndInt(6,10)});
             }
           }
-          // se troppo vicino (< rangeMin) prova ad allontanarsi (kite)
-          if(dist < e.rangeMin){
+          // kite se troppo vicino
+          if(distM < e.rangeMin){
             e.moveTick = (e.moveTick+1)%e.kiteEvery;
             if(e.moveTick===0){
-              // scegli la mossa che aumenta la distanza
               const options = [
                 {x:e.x+1,y:e.y},{x:e.x-1,y:e.y},{x:e.x,y:e.y+1},{x:e.x,y:e.y-1},{x:e.x,y:e.y}
               ].filter(p=>walkable(p.x,p.y) && !(p.x===player.x && p.y===player.y));
-              options.sort((a,b)=> manhattan(b,player)-manhattan(a,player)); // ordina per distanza decrescente
+              options.sort((a,b)=> manhattan(b,player)-manhattan(a,player));
               const best = options[0];
               if(best){ e.x=best.x; e.y=best.y; }
             }
           }
         } else {
-          // piccolo pattugliamento/avvicinamento grossolano verso riga/colonna
+          // muovi verso riga/colonna del player a scatti
           e.tick = (e.tick+1)%e.patrolEvery;
           if(e.tick===0){
-            // preferisci muoverti verso stessa riga o colonna, evitando muri
             const dx = Math.sign(player.x - e.x), dy = Math.sign(player.y - e.y);
             const opts = [];
             if(dx!==0) opts.push({x:e.x+dx,y:e.y});
             if(dy!==0) opts.push({x:e.x,y:e.y+dy});
-            opts.push({x:e.x,y:e.y}); // o resta
+            opts.push({x:e.x,y:e.y});
             const move = opts.find(p=>walkable(p.x,p.y) && !(p.x===player.x && p.y===player.y));
             if(move){ e.x=move.x; e.y=move.y; }
           }
@@ -308,19 +310,16 @@
     }
   }
 
-  // Proiettili update
+  // Proiettili
   function updateProjectiles(){
     for(let i=projectiles.length-1;i>=0;i--){
       const pr = projectiles[i];
-      // velocità: 1 cella ogni 2 frame per leggibilità
       pr.spdTick = (pr.spdTick+1)%2;
       if(pr.spdTick!==0) continue;
-      const nx = pr.x + pr.dx;
-      const ny = pr.y + pr.dy;
+      const nx = pr.x + pr.dx, ny = pr.y + pr.dy;
       if(!inside(nx,ny) || map[ny][nx]===1){
         projectiles.splice(i,1); continue;
       }
-      // colpisce player?
       if(nx===player.x && ny===player.y){
         player.hp = Math.max(0, player.hp - pr.dmg);
         flashHit(player.x,player.y);
@@ -332,39 +331,37 @@
     }
   }
 
-  // Interactions & items
+  // Interazioni & items
   function handleInteractions(){
-    // movimento player 1 step/frame
+    // movimento player 1 step/frame evitando i nemici
     if(pathQueue.length){
       const next=pathQueue.shift();
-      // evita occupare tile nemici
       if(walkable(next.x,next.y) && !enemies.some(e=>e.x===next.x&&e.y===next.y)){
         player.x=next.x; player.y=next.y;
       } else pathQueue=[];
     }
-
     // coins (+XP)
     for(let i=coins.length-1;i>=0;i--){
       if(coins[i].x===player.x&&coins[i].y===player.y){
         coins.splice(i,1); player.coins++; gainXP(XP_COIN);
       }
     }
-    // potions → inventory
+    // potions
     for(let i=potions.length-1;i>=0;i--){
       if(potions[i].x===player.x&&potions[i].y===player.y){
         potions.splice(i,1); player.pots++;
       }
     }
-    // melee contact damage (adiacente o stessa tile)
+    // melee contact damage
     const now=performance.now();
     for(const e of enemies){
       if(e.type!=='melee') continue;
       const touching=chebyshev(player,e)===0;
       const adjacent=chebyshev(player,e)===1;
       if((touching||adjacent) && (now - e.lastHit) >= e.hitCd){
-        e.lastHit = now;
+        e.lastHit=now;
         const dmg=rndInt(e.atkMin,e.atkMax);
-        player.hp = Math.max(0, player.hp - dmg);
+        player.hp=Math.max(0,player.hp-dmg);
         flashHit(player.x,player.y);
         if(player.hp===0) gameOver();
       }
@@ -376,22 +373,14 @@
     if(player.hp>=player.maxHp) return;
     player.pots--;
     player.hp = Math.min(player.maxHp, player.hp + 35);
-    // flash viola
     ctx.save(); ctx.globalAlpha=.20; ctx.fillStyle='#8b5cf6'; ctx.fillRect(0,0,cv.width,cv.height); ctx.restore();
     draw();
   }
 
-  // Save / Load (includiamo enemies e NON salviamo i proiettili per semplicità)
+  // Save / Load (persistiamo anche enemies; NON i proiettili)
   function saveGame(){
     try{
-      const data = {
-        build: BUILD,
-        map,
-        player,
-        enemies,
-        coins,
-        potions
-      };
+      const data = { build: BUILD, map, player, enemies, coins, potions };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
       toast('Salvataggio completato.');
     }catch(e){ console.error(e); alert('Errore nel salvataggio.'); }
@@ -407,19 +396,57 @@
       Object.assign(player, data.player || {});
       enemies.length=0;
       (data.enemies||[]).forEach(e=>{
-        // ripristina tipo e default mancanti
-        if(e.type==='ranged') enemies.push(Object.assign(spawnRanged(e.x|0, e.y|0), e));
-        else enemies.push(Object.assign(spawnMelee(e.x|0, e.y|0), e));
+        if(e.type==='ranged') enemies.push(Object.assign(spawnRanged(e.x|0,e.y|0), e));
+        else enemies.push(Object.assign(spawnMelee(e.x|0,e.y|0), e));
       });
       coins.length=0; (data.coins||[]).forEach(c=>coins.push({x:c.x|0, y:c.y|0}));
       potions.length=0; (data.potions||[]).forEach(p=>potions.push({x:p.x|0, y:p.y|0}));
-      projectiles.length=0; // non persistiamo
+      projectiles.length=0;
       draw(); toast('Caricamento completato.');
     }catch(e){ console.error(e); alert('Salvataggio corrotto o non valido.'); }
   }
   function toast(msg){
     statusEl.textContent = `[${BUILD}] ${msg}`;
     setTimeout(()=>updateStatus(), 900);
+  }
+
+  // Respawn morbido (no perdita exp/lv)
+  function softRespawn(){
+    // HP pieni e ritorno allo spawn
+    player.hp = player.maxHp;
+    player.x = 1; player.y = 1;
+    // svuota proiettili e ricolloca i nemici per sicurezza
+    projectiles.length = 0;
+    for(let i=0;i<enemies.length;i++){
+      const s = randEmpty();
+      enemies[i].x = s.x; enemies[i].y = s.y;
+      if(enemies[i].type==='ranged'){ enemies[i].lastShot = 0; enemies[i].lastPoke = 0; }
+      if(enemies[i].type==='melee'){ enemies[i].lastHit = 0; }
+    }
+    pathQueue.length = 0;
+    draw();
+  }
+
+  // Reset completo (tutto da zero)
+  function hardReset(){
+    for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=0;
+    genBlocks();
+    // reset player TOTALe
+    player.x=1;player.y=1;player.hp=player.maxHp=100;player.coins=0;player.pots=0;player.lastAtk=0;
+    player.lvl=1; player.exp=0; player.atkMin=6; player.atkMax=12; player.atkCd=400;
+    enemies.length=0;
+    enemies.push(spawnMelee(COLS-2, ROWS-2));
+    const s=randEmpty(); enemies.push(spawnRanged(s.x,s.y));
+    coins.length=0; for(let i=0;i<6;i++) coins.push(randEmpty());
+    potions.length=0; for(let i=0;i<2;i++) potions.push(randEmpty());
+    projectiles.length=0;
+    pathQueue.length=0; draw();
+  }
+
+  // Game over → respawn morbido
+  function gameOver(){
+    alert('Sei stato sconfitto! Respawn senza perdita di livello/EXP.');
+    softRespawn();
   }
 
   // Loop
@@ -454,11 +481,8 @@
     }
     // enemies
     for(const e of enemies){
-      if(e.type==='ranged'){
-        drawActor(e.x,e.y,'#a855f7'); // viola per il ranged
-      }else{
-        drawActor(e.x,e.y,getVar('--enemy')); // rosso per melee
-      }
+      if(e.type==='ranged') drawActor(e.x,e.y,'#a855f7'); // viola
+      else drawActor(e.x,e.y,getVar('--enemy'));          // rosso
       drawHpBar(e.x,e.y,e.hp,e.maxHp);
     }
     // player
@@ -466,8 +490,7 @@
     // projectiles
     for(const pr of projectiles){
       const x=pr.x*TILE+TILE/2, y=pr.y*TILE+TILE/2;
-      ctx.fillStyle='#f87171'; // rosso chiaro
-      ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#f87171'; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
     }
     // XP bar
     drawXpBar();
@@ -515,56 +538,7 @@
     ctx.save(); ctx.globalAlpha=.25; ctx.fillStyle='#ff0000'; ctx.beginPath(); ctx.arc(x,y,26,0,Math.PI*2); ctx.fill(); ctx.restore();
   }
 
-  // Reset / Game Over
-  function resetAll(){
-    for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=0;
-    genBlocks();
-    player.x=1;player.y=1;player.hp=player.maxHp=100;player.coins=0;player.pots=0;player.lastAtk=0;
-    player.lvl=1; player.exp=0; player.atkMin=6; player.atkMax=12; player.atkCd=400;
-    enemies.length=0;
-    enemies.push(spawnMelee(COLS-2, ROWS-2));
-    const sr=randEmpty(); enemies.push(spawnRanged(sr.x,sr.y));
-    coins.length=0; for(let i=0;i<6;i++) coins.push(randEmpty());
-    potions.length=0; for(let i=0;i<2;i++) potions.push(randEmpty());
-    projectiles.length=0;
-    pathQueue.length=0; draw();
-  }
-  function gameOver(){ alert('Sei stato sconfitto! Resetto la partita.'); resetAll(); }
-
-  // Save/Load helpers
-  function saveGame(){
-    try{
-      const data = {build:BUILD, map, player, enemies, coins, potions};
-      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-      toast('Salvataggio completato.');
-    }catch(e){ console.error(e); alert('Errore nel salvataggio.'); }
-  }
-  function loadGame(){
-    try{
-      const raw = localStorage.getItem(SAVE_KEY);
-      if(!raw) return alert('Nessun salvataggio trovato.');
-      const data = JSON.parse(raw);
-      if(Array.isArray(data.map) && data.map.length===ROWS){
-        for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=data.map[y][x]|0;
-      }
-      Object.assign(player, data.player || {});
-      enemies.length=0;
-      (data.enemies||[]).forEach(e=>{
-        if(e.type==='ranged') enemies.push(Object.assign(spawnRanged(e.x|0,e.y|0), e));
-        else enemies.push(Object.assign(spawnMelee(e.x|0,e.y|0), e));
-      });
-      coins.length=0; (data.coins||[]).forEach(c=>coins.push({x:c.x|0, y:c.y|0}));
-      potions.length=0; (data.potions||[]).forEach(p=>potions.push({x:p.x|0, y:p.y|0}));
-      projectiles.length=0;
-      draw(); toast('Caricamento completato.');
-    }catch(e){ console.error(e); alert('Salvataggio corrotto o non valido.'); }
-  }
-  function toast(msg){
-    statusEl.textContent = `[${BUILD}] ${msg}`;
-    setTimeout(()=>updateStatus(), 900);
-  }
-
-  // Start
+  // Avvio
   draw();
   setInterval(step,120);
 })();
