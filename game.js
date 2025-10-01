@@ -1,5 +1,9 @@
-/* ===== Barebones RPG – Step 2b: cooldown + aggro (visibili) =====
-   Build: core2b
+/* ===== Barebones RPG – Step 3: EXP + Level + XP bar =====
+   Parte da build core2b (cooldown + aggro) e aggiunge:
+   - EXP/Level (cap 99)
+   - EXP: +2 moneta, +20 uccisione nemico
+   - Level Up: +10 MaxHP, HP full, +1 atkMin/atkMax, -20ms atkCd (min 200ms)
+   - Barra XP sul canvas
 */
 
 (() => {
@@ -28,7 +32,8 @@
     x:1, y:1,
     hp:100, maxHp:100, coins:0,
     atkMin:6, atkMax:12,
-    lastAtk:0, atkCd:400 // ms
+    lastAtk:0, atkCd:400, // ms
+    lvl:1, exp:0
   };
   const enemy  = {
     x:COLS-2, y:ROWS-2,
@@ -60,6 +65,34 @@
   const manhattan = (a,b)=> Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
   const chebyshev = (a,b)=> Math.max(Math.abs(a.x-b.x), Math.abs(a.y-b.y));
   const randInt = (a,b)=> a + Math.floor(Math.random()*(b-a+1));
+
+  // --- EXP / Level
+  const MAX_LVL = 99;
+  const XP_COIN = 2;
+  const XP_KILL = 20;
+  const xpNeeded = lvl => Math.floor(50 * Math.pow(lvl, 1.5));
+
+  function gainXP(n){
+    if(player.lvl >= MAX_LVL) return;
+    player.exp += n;
+    while(player.lvl < MAX_LVL && player.exp >= xpNeeded(player.lvl)){
+      player.exp -= xpNeeded(player.lvl);
+      levelUp();
+    }
+  }
+  function levelUp(){
+    player.lvl = Math.min(MAX_LVL, player.lvl + 1);
+    player.maxHp += 10;
+    player.hp = player.maxHp;
+    player.atkMin += 1; player.atkMax += 1;
+    player.atkCd = Math.max(200, player.atkCd - 20);
+    // piccolo flash verde
+    ctx.save();
+    ctx.globalAlpha = .25;
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.restore();
+  }
 
   // --- BFS
   function bfs(sx,sy, tx,ty){
@@ -134,21 +167,22 @@
     enemy.hp = Math.max(0, enemy.hp - dmg);
     flashHit(enemy.x, enemy.y);
     if(enemy.hp===0){
+      // drop moneta e respawn
       coins.push({x:enemy.x, y:enemy.y});
+      gainXP(XP_KILL);
       const spot = randEmpty();
       enemy.x=spot.x; enemy.y=spot.y; enemy.hp=enemy.maxHp; enemy.mode='patrol';
     }
     draw();
   }
 
-  // --- Nemico: patrol + chase (visibile e aggressivo)
+  // --- Nemico: patrol + chase
   function enemyAI(){
     const dist = manhattan(enemy, player);
     if(dist<=6) enemy.mode='chase';
     else if(dist>=10) enemy.mode='patrol';
 
     if(enemy.mode==='chase'){
-      // muovi OGNI frame verso il player (si nota subito)
       const options = [
         {x:enemy.x+1,y:enemy.y},{x:enemy.x-1,y:enemy.y},
         {x:enemy.x,y:enemy.y+1},{x:enemy.x,y:enemy.y-1}
@@ -157,7 +191,6 @@
       const best = options[0];
       if(best) { enemy.x=best.x; enemy.y=best.y; }
     } else {
-      // pattuglia ogni 8 tick (più spesso per farsi notare)
       enemy.tick = (enemy.tick+1)%8;
       if(enemy.tick===0){
         const dirs=[[1,0],[-1,0],[0,1],[0,-1],[0,0]];
@@ -170,11 +203,12 @@
 
   // --- Interazioni
   function handleInteractions(){
-    // raccogli monete
+    // raccogli monete (+EXP)
     for(let i=coins.length-1;i>=0;i--){
       if(coins[i].x===player.x && coins[i].y===player.y){
         coins.splice(i,1);
         player.coins++;
+        gainXP(XP_COIN);
       }
     }
     // danno a contatto / adiacenza
@@ -208,6 +242,7 @@
   // --- Draw
   function draw(){
     ctx.clearRect(0,0,cv.width,cv.height);
+    // tiles
     for(let y=0;y<ROWS;y++){
       for(let x=0;x<COLS;x++){
         ctx.fillStyle = (map[y][x]===1)? getVar('--block') : ((x+y)%2===0? getVar('--tileA') : getVar('--tileB'));
@@ -227,13 +262,18 @@
     drawActor(player.x, player.y, getVar('--player'));
     drawHpBar(player.x, player.y, player.hp, player.maxHp);
 
-    // --- HUD di debug sempre VISIBILE ---
+    drawXpBar(); // <— nuova barra XP
+
+    // HUD debug
     const now = performance.now();
     const cdRemain = Math.max(0, player.atkCd - (now - player.lastAtk));
     const cdPct = Math.round(100 * cdRemain / player.atkCd);
     const dist = manhattan(enemy, player);
+    const need = player.lvl < MAX_LVL ? xpNeeded(player.lvl) : 0;
+    const xpPct = player.lvl < MAX_LVL ? Math.floor(100*player.exp/need) : 100;
+
     statusEl.textContent =
-      `build: core2b | CD attacco: ${cdRemain.toFixed(0)}ms (${cdPct}%) | enemy: ${enemy.mode} (dist=${dist}) | HP: ${player.hp}/${player.maxHp} | EHP: ${enemy.hp}/${enemy.maxHp} | monete: ${player.coins}`;
+      `build: core3 | LV ${player.lvl} | XP ${xpPct}% | CD ${cdRemain.toFixed(0)}ms (${cdPct}%) | enemy: ${enemy.mode} (dist=${dist}) | HP: ${player.hp}/${player.maxHp} | EHP: ${enemy.hp}/${enemy.maxHp} | monete: ${player.coins}`;
   }
 
   function drawActor(tx,ty,color){
@@ -257,6 +297,21 @@
     ctx.strokeStyle = '#0008'; ctx.strokeRect(px, py, w, h);
   }
 
+  function drawXpBar(){
+    // Barra XP orizzontale in alto
+    const h = 10, pad = 6;
+    const x = pad, y = pad, w = cv.width - pad*2;
+    const need = player.lvl < MAX_LVL ? xpNeeded(player.lvl) : 1;
+    const ratio = player.lvl < MAX_LVL ? Math.max(0, Math.min(1, player.exp/need)) : 1;
+    ctx.fillStyle = '#0b1224aa'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#7c3aed';   ctx.fillRect(x, y, w*ratio, h);
+    ctx.strokeStyle = '#1f2a44'; ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(`LV ${player.lvl}${player.lvl<MAX_LVL?` — ${Math.floor(ratio*100)}%`:''}`, x, y+h+2);
+  }
+
   function flashHit(tx,ty){
     const x = tx*TILE + TILE/2, y = ty*TILE + TILE/2;
     ctx.save();
@@ -272,8 +327,9 @@
   function resetAll(){
     for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=0;
     genBlocks();
-    player.x=1; player.y=1; player.hp=player.maxHp; player.coins=0; player.lastAtk=0;
-    enemy.x=COLS-2; enemy.y=ROWS-2; enemy.hp=enemy.maxHp; enemy.tick=0; enemy.mode='patrol'; enemy.lastHit=0;
+    player.x=1; player.y=1; player.hp=player.maxHp=100; player.coins=0; player.lastAtk=0;
+    player.lvl=1; player.exp=0; player.atkMin=6; player.atkMax=12; player.atkCd=400;
+    enemy.x=COLS-2; enemy.y=ROWS-2; enemy.hp=enemy.maxHp=60; enemy.tick=0; enemy.mode='patrol'; enemy.lastHit=0;
     coins.length=0; for(let i=0;i<6;i++) coins.push(randEmpty());
     pathQueue.length=0;
     draw();
