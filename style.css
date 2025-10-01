@@ -1,16 +1,38 @@
 :root{
-  --bg:#0b1224; --panel:#0f172a; --stroke:#1f2a44; --text:#e5e7eb;
+  --bg:#0b1224; --panel:#0f172a; --stroke:#1f2a44; --text:#e5e7eb; --muted:#9ca3af;
   --tileA:#0e2a1e; --tileB:#123022; --block:#15223b;
-  --player:#3b82f6; --enemy:#ef4444; --coin:#facc15; --shadow:#0006;
+  --player:#3b82f6; --enemy:#ef4444; --coin:#facc15; --shadow:#0006; --hp:#10b981; --hpBack:#1f2937;
 }
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto}
 header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--panel);border-bottom:1px solid var(--stroke)}
+header .muted{color:var(--muted);margin-left:8px}
 header button{background:#26325a;color:#fff;border:1px solid #31406e;border-radius:8px;padding:6px 10px;cursor:pointer}
 header button:hover{filter:brightness(1.05)}
 main{max-width:1000px;margin:14px auto;padding:12px;background:var(--panel);border:1px solid var(--stroke);border-radius:12px}
 #game{display:block;width:100%;height:auto;border-radius:10px;border:1px solid var(--stroke);background:#0a1630;image-rendering:pixelated;touch-action:manipulation}
 .help{margin:.6rem 0 0;color:#a1a1aa}
 .help .coin{color:var(--coin);font-weight:700}
-.help .enemy{color:var(--enemy);font-weight:700}
-#status{margin-top:8px;color:#9ca3af}
+.help .potion{color:#a78bfa;font-weight:700}
+#status{margin-top:8px;color:var(--muted)}
+
+/* Bottone flottante (mobile) */
+.fab{
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid #31406e;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 24px;
+  line-height: 56px;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  z-index: 20;
+}
+.fab:active{ transform: scale(0.98); }
+@media (hover:hover){ .fab:hover{ filter: brightness(1.05); } }
