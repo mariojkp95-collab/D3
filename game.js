@@ -1,8 +1,5 @@
-/* ===== Barebones RPG – Step 2: Cooldown + Aggro =====
-   - Come Step 1, ma:
-   - Cooldown attacco giocatore (400 ms)
-   - Il nemico entra in "chase" entro raggio 6 e smette oltre raggio 10
-   - Il nemico infligge danno a contatto ogni 800 ms
+/* ===== Barebones RPG – Step 2b: cooldown + aggro (visibili) =====
+   Build: core2b
 */
 
 (() => {
@@ -137,7 +134,6 @@
     enemy.hp = Math.max(0, enemy.hp - dmg);
     flashHit(enemy.x, enemy.y);
     if(enemy.hp===0){
-      // drop moneta e respawn
       coins.push({x:enemy.x, y:enemy.y});
       const spot = randEmpty();
       enemy.x=spot.x; enemy.y=spot.y; enemy.hp=enemy.maxHp; enemy.mode='patrol';
@@ -145,16 +141,14 @@
     draw();
   }
 
-  // --- Nemico: patrol + chase
-  // - chase se distanza <=6 (manhattan)
-  // - torna patrol quando distanza >=10
+  // --- Nemico: patrol + chase (visibile e aggressivo)
   function enemyAI(){
     const dist = manhattan(enemy, player);
     if(dist<=6) enemy.mode='chase';
     else if(dist>=10) enemy.mode='patrol';
 
     if(enemy.mode==='chase'){
-      // prova ad avvicinarsi scegliendo la mossa che riduce la distanza
+      // muovi OGNI frame verso il player (si nota subito)
       const options = [
         {x:enemy.x+1,y:enemy.y},{x:enemy.x-1,y:enemy.y},
         {x:enemy.x,y:enemy.y+1},{x:enemy.x,y:enemy.y-1}
@@ -163,8 +157,8 @@
       const best = options[0];
       if(best) { enemy.x=best.x; enemy.y=best.y; }
     } else {
-      // pattuglia ogni 12 tick
-      enemy.tick = (enemy.tick+1)%12;
+      // pattuglia ogni 8 tick (più spesso per farsi notare)
+      enemy.tick = (enemy.tick+1)%8;
       if(enemy.tick===0){
         const dirs=[[1,0],[-1,0],[0,1],[0,-1],[0,0]];
         const d = dirs[Math.floor(Math.random()*dirs.length)];
@@ -183,8 +177,8 @@
         player.coins++;
       }
     }
-    // danno a contatto dal nemico (0 o 1 in diagonale)
-    const touching = chebyshev(player, enemy)===0; // stessa tile (in questa versione rare volte può succedere)
+    // danno a contatto / adiacenza
+    const touching = chebyshev(player, enemy)===0;
     const adjacent = chebyshev(player, enemy)===1;
     const now = performance.now();
     if((touching || adjacent) && (now - enemy.lastHit) >= enemy.hitCd){
@@ -198,7 +192,6 @@
 
   // --- Loop
   function step(){
-    // muovi player 1 step/frame
     if(pathQueue.length){
       const next = pathQueue.shift();
       if(walkable(next.x,next.y) && !(next.x===enemy.x && next.y===enemy.y)){
@@ -215,7 +208,6 @@
   // --- Draw
   function draw(){
     ctx.clearRect(0,0,cv.width,cv.height);
-    // tiles
     for(let y=0;y<ROWS;y++){
       for(let x=0;x<COLS;x++){
         ctx.fillStyle = (map[y][x]===1)? getVar('--block') : ((x+y)%2===0? getVar('--tileA') : getVar('--tileB'));
@@ -235,13 +227,13 @@
     drawActor(player.x, player.y, getVar('--player'));
     drawHpBar(player.x, player.y, player.hp, player.maxHp);
 
-    // piccola indicazione di cooldown (se in ricarica mostra "%")
+    // --- HUD di debug sempre VISIBILE ---
     const now = performance.now();
-    const cd = Math.max(0, player.atkCd - (now - player.lastAtk));
-    const cdPct = cd>0 ? Math.ceil(100*cd/player.atkCd) : 0;
-
-    statusEl.textContent = `HP: ${player.hp}/${player.maxHp} | Enemy: ${enemy.hp}/${enemy.maxHp} | Monete: ${player.coins}` +
-      (cd>0 ? ` | Cooldown attacco: ${cdPct}%` : '');
+    const cdRemain = Math.max(0, player.atkCd - (now - player.lastAtk));
+    const cdPct = Math.round(100 * cdRemain / player.atkCd);
+    const dist = manhattan(enemy, player);
+    statusEl.textContent =
+      `build: core2b | CD attacco: ${cdRemain.toFixed(0)}ms (${cdPct}%) | enemy: ${enemy.mode} (dist=${dist}) | HP: ${player.hp}/${player.maxHp} | EHP: ${enemy.hp}/${enemy.maxHp} | monete: ${player.coins}`;
   }
 
   function drawActor(tx,ty,color){
