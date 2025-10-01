@@ -3,25 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Barebones RPG</title>
-  <link rel="stylesheet" href="style.css?v=core1">
+  <title>Barebones RPG — core3g</title>
+  <link rel="stylesheet" href="style.css?v=core3g">
 </head>
 <body>
-</header>
+  <header>
     <div class="left">
-      <strong>Barebones RPG</strong>
+      <strong>Barebones RPG</strong> <span class="muted">core</span>
     </div>
     <div class="right">
+      <button id="btnSave">Save</button>
+      <button id="btnLoad">Load</button>
       <button id="btnReset">Reset</button>
     </div>
   </header>
 
   <main>
     <canvas id="game" width="960" height="576" aria-label="Gioco"></canvas>
-    <p class="help">Clicca su una casella per muoverti. Raccogli le monete <span class="coin">●</span>. Evita il nemico <span class="enemy">■</span>.</p>
+    <p class="help">
+      Clicca per muoverti • <b>SPAZIO</b> per attaccare • Clic sul nemico adiacente = attacco •
+      Raccogli <span class="coin">●</span> e <span class="potion">🍵</span> • Doppio tap = usa pozione
+    </p>
     <div id="status"></div>
   </main>
 
-  <script src="game.js?v=core3h"></script>
+  <!-- Bottone flottante (mobile) -->
+  <button id="btnUsePotion" class="fab" aria-label="Usa pozione">🍵</button>
+
+  <script src="game.js?v=core3g1"></script>
 </body>
 </html>
