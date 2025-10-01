@@ -1,13 +1,13 @@
-/* ===== Barebones RPG – Step 4: Pozioni — BUILD core3d =====
-   Aggiunte:
-   - Pozioni a terra (2 iniziali) + chance di drop dal nemico
-   - Raccogli → inventario
-   - Tasto E = usa 1 pozione (+35 HP, capped a max)
-   - Hint a schermo quando hai pozioni e non sei full HP
-   Tutto il resto identico a core3c (EXP/Level, cooldown, aggro, click-hit-test).
+/* ===== Barebones RPG – Step 4 FIX: chase throttled + mobile potion button — BUILD core3e =====
+   Fix:
+   - CHASE del nemico non più ogni frame: si muove a cadenza regolare (default ~260ms)
+   - In chase il nemico non fa passi casuali: sceglie sempre il passo che riduce la distanza
+   Mobile:
+   - Bottone 🧪 sul canvas (in basso a destra) per usare la pozione anche da touch
+   Mantiene: EXP/Level, cooldown attacco, hit-test click su nemico, monete/pozioni ecc.
 */
 (() => {
-  const BUILD = 'core3d';
+  const BUILD = 'core3e';
 
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
@@ -41,7 +41,8 @@
     tick:0,
     mode:'patrol', // 'patrol' | 'chase'
     lastHit:0, hitCd:800, // danno a contatto
-    atkMin:5, atkMax:9
+    atkMin:5, atkMax:9,
+    lastMove:0, moveCdChase:260, moveCdPatrol:600
   };
   const coins=[], potions=[];
 
@@ -103,11 +104,17 @@
       for(const d of dirs){
         const nx=cur.x+d[0], ny=cur.y+d[1], kk=`${nx},${ny}`;
         if(!walkable(nx,ny)||seen.has(kk)) continue;
-        seen.add(kk); prev.set(kk,cur); q.push({x:nx,y:ny});
+        seen.add(kk); prev.set(kk,cur); q.push({x:nx, y:ny});
       }
     }
     return null;
   }
+
+  // --- UI touch: bottone pozione su canvas ---
+  const ui = {
+    pot: { x: cv.width - 72, y: cv.height - 72, r: 28 } // centro + raggio
+  };
+  function pointInCircle(px,py,cx,cy,r){ const dx=px-cx, dy=py-cy; return dx*dx+dy*dy <= r*r; }
 
   // Input
   let pathQueue=[];
@@ -122,27 +129,35 @@
   function enemyRect(){ const x=enemy.x*TILE+TILE/2-16, y=enemy.y*TILE+TILE/2-22; return {x,y,w:32,h:36}; }
   function inRect(px,py,r){ return px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h; }
 
-  cv.addEventListener('click',(ev)=>{
+  function onPointer(ev){
     const {sx,sy,tx,ty}=canvasToTile(ev);
+    // 1) bottone pozione (mobile)
+    if(pointInCircle(sx,sy, ui.pot.x, ui.pot.y, ui.pot.r)){
+      usePotion();
+      return;
+    }
+    // 2) attacco (click su nemico + adiacente + cd pronto)
     const now=performance.now();
     const cdReady=(now-player.lastAtk)>=player.atkCd;
     const adj8=chebyshev(player,enemy)===1;
     const r=enemyRect();
     if(inRect(sx,sy,r)&&adj8&&cdReady){ attackEnemy(); return; }
     if(tx===enemy.x&&ty===enemy.y&&adj8&&cdReady){ attackEnemy(); return; }
+    // 3) movimento
     const p=bfs(player.x,player.y,tx,ty); if(p&&p.length) pathQueue=p;
-  });
+  }
 
-  // Attacco: SPAZIO
+  cv.addEventListener('click', onPointer);
+  cv.addEventListener('touchstart', (e)=>{ if(e.touches && e.touches[0]) onPointer(e.touches[0]); }, {passive:true});
+
+  // Attacco: SPAZIO (desktop)
   window.addEventListener('keydown',(e)=>{
     if(e.code==='Space'||e.key===' '){
       const now=performance.now();
       if(chebyshev(player,enemy)===1&&(now-player.lastAtk)>=player.atkCd) attackEnemy();
     }
-    // Usa pozione: E
-    if(e.key==='e' || e.key==='E'){
-      usePotion();
-    }
+    // Pozione: E (desktop)
+    if(e.key==='e' || e.key==='E') usePotion();
   });
 
   btnReset.addEventListener('click', resetAll);
@@ -158,31 +173,38 @@
       if(Math.random()<0.7) coins.push({x:enemy.x,y:enemy.y});
       else potions.push({x:enemy.x,y:enemy.y});
       gainXP(XP_KILL);
-      const spot=randEmpty(); enemy.x=spot.x; enemy.y=spot.y; enemy.hp=enemy.maxHp; enemy.mode='patrol';
+      const spot=randEmpty(); enemy.x=spot.x; enemy.y=spot.y; enemy.hp=enemy.maxHp; enemy.mode='patrol'; enemy.lastMove=0;
     }
     draw();
   }
 
-  // AI nemico
+  // AI nemico (throttled)
   function enemyAI(){
     const dist=manhattan(enemy,player);
     if(dist<=6) enemy.mode='chase';
     else if(dist>=10) enemy.mode='patrol';
 
+    const now = performance.now();
+
     if(enemy.mode==='chase'){
-      const options=[
-        {x:enemy.x+1,y:enemy.y},{x:enemy.x-1,y:enemy.y},
-        {x:enemy.x,y:enemy.y+1},{x:enemy.x,y:enemy.y-1}
-      ].filter(p=>walkable(p.x,p.y) && !(p.x===player.x && p.y===player.y));
-      options.sort((a,b)=>manhattan(a,player)-manhattan(b,player));
-      const best=options[0]; if(best){ enemy.x=best.x; enemy.y=best.y; }
-    }else{
-      enemy.tick=(enemy.tick+1)%8;
-      if(enemy.tick===0){
+      if(now - enemy.lastMove >= enemy.moveCdChase){
+        // scegli la mossa che riduce maggiormente la distanza
+        const options=[
+          {x:enemy.x+1,y:enemy.y},{x:enemy.x-1,y:enemy.y},
+          {x:enemy.x,y:enemy.y+1},{x:enemy.x,y:enemy.y-1}
+        ].filter(p=>walkable(p.x,p.y) && !(p.x===player.x && p.y===player.y));
+        options.sort((a,b)=> manhattan(a,player) - manhattan(b,player));
+        const best = options[0];
+        if(best){ enemy.x=best.x; enemy.y=best.y; }
+        enemy.lastMove = now;
+      }
+    } else { // patrol
+      if(now - enemy.lastMove >= enemy.moveCdPatrol){
         const dirs=[[1,0],[-1,0],[0,1],[0,-1],[0,0]];
-        const d=dirs[Math.floor(Math.random()*dirs.length)];
+        const d = dirs[Math.floor(Math.random()*dirs.length)];
         const nx=enemy.x+d[0], ny=enemy.y+d[1];
         if(walkable(nx,ny) && !(nx===player.x && ny===player.y)){ enemy.x=nx; enemy.y=ny; }
+        enemy.lastMove = now;
       }
     }
   }
@@ -254,18 +276,10 @@
     // potions (boccetta viola)
     for(const p of potions){
       const x=p.x*TILE, y=p.y*TILE;
-      // bottiglia
-      ctx.fillStyle='#8b5cf6';
-      ctx.fillRect(x + TILE/2 - 8, y + TILE/2 - 14, 16, 20);
-      // collo
-      ctx.fillStyle='#a78bfa';
-      ctx.fillRect(x + TILE/2 - 5, y + TILE/2 - 20, 10, 6);
-      // tappo
-      ctx.fillStyle='#6d28d9';
-      ctx.fillRect(x + TILE/2 - 6, y + TILE/2 - 24, 12, 4);
-      // ombra
-      ctx.fillStyle = '#0006';
-      ctx.beginPath(); ctx.ellipse(x+TILE/2, y+TILE-12, 12, 4, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle='#8b5cf6'; ctx.fillRect(x+TILE/2-8, y+TILE/2-14, 16, 20);
+      ctx.fillStyle='#a78bfa'; ctx.fillRect(x+TILE/2-5, y+TILE/2-20, 10, 6);
+      ctx.fillStyle='#6d28d9'; ctx.fillRect(x+TILE/2-6, y+TILE/2-24, 12, 4);
+      ctx.fillStyle='#0006'; ctx.beginPath(); ctx.ellipse(x+TILE/2, y+TILE-12, 12, 4, 0, 0, Math.PI*2); ctx.fill();
     }
     // enemy
     drawActor(enemy.x,enemy.y,getVar('--enemy')); drawHpBar(enemy.x,enemy.y,enemy.hp,enemy.maxHp);
@@ -273,15 +287,11 @@
     drawActor(player.x,player.y,getVar('--player')); drawHpBar(player.x,player.y,player.hp,player.maxHp);
     // XP bar
     drawXpBar();
+    // Bottone pozione (HUD mobile)
+    drawPotionButton();
     // Banner build
     ctx.fillStyle='#ffffffcc'; ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.textBaseline='top';
     ctx.fillText('BUILD '+BUILD, 8, 8+12+12);
-    // Hint “E” quando utile
-    if(player.pots>0 && player.hp<player.maxHp){
-      ctx.fillStyle='#00000066'; ctx.fillRect(cv.width-220, 10, 210, 28);
-      ctx.fillStyle='#e5e7eb'; ctx.font='13px system-ui'; ctx.textAlign='right';
-      ctx.fillText('E = Usa pozione (+35 HP)', cv.width-12, 14);
-    }
 
     // HUD debug
     const now=performance.now();
@@ -316,6 +326,21 @@
     ctx.fillStyle='#e5e7eb'; ctx.font='12px system-ui'; ctx.textAlign='left'; ctx.textBaseline='top';
     ctx.fillText(`LV ${player.lvl}${player.lvl<MAX_LVL?` — ${Math.floor(ratio*100)}%`:''}`, x, y+h+2);
   }
+  function drawPotionButton(){
+    const {x,y,r}=ui.pot;
+    // pulsante
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle = player.pots>0 && player.hp<player.maxHp ? '#1f2a44' : '#111827';
+    ctx.fill();
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = 2; ctx.stroke();
+    // icona
+    ctx.font='20px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#e5e7eb';
+    ctx.fillText('🧪', x, y-2);
+    // contatore
+    ctx.font='12px system-ui'; ctx.fillText(String(player.pots), x, y+16);
+    ctx.restore();
+  }
   function flashHit(tx,ty){
     const x=tx*TILE+TILE/2, y=ty*TILE+TILE/2;
     ctx.save(); ctx.globalAlpha=.25; ctx.fillStyle='#ff0000'; ctx.beginPath(); ctx.arc(x,y,26,0,Math.PI*2); ctx.fill(); ctx.restore();
@@ -327,7 +352,7 @@
     genBlocks();
     player.x=1;player.y=1;player.hp=player.maxHp=100;player.coins=0;player.pots=0;player.lastAtk=0;
     player.lvl=1; player.exp=0; player.atkMin=6; player.atkMax=12; player.atkCd=400;
-    enemy.x=COLS-2;enemy.y=ROWS-2;enemy.hp=enemy.maxHp=60;enemy.tick=0;enemy.mode='patrol';enemy.lastHit=0;
+    enemy.x=COLS-2;enemy.y=ROWS-2;enemy.hp=enemy.maxHp=60;enemy.tick=0;enemy.mode='patrol';enemy.lastHit=0; enemy.lastMove=0;
     coins.length=0; for(let i=0;i<6;i++) coins.push(randEmpty());
     potions.length=0; for(let i=0;i<2;i++) potions.push(randEmpty());
     pathQueue.length=0; draw();
