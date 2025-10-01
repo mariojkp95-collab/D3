@@ -1,12 +1,16 @@
-/* ===== Barebones RPG – Step 5: Save/Load — BUILD core3f =====
-   - Pulsanti: Save / Load
-   - Persistenza su localStorage (mappa, player, enemy, coins, potions)
-   - Mantiene tutte le funzioni di core3e (aggro fix + mobile potions)
+/* ===== Barebones RPG — BUILD core3g =====
+   Include:
+   - Click-to-move (BFS), attacco con cooldown (click sul nemico adiacente o SPACE)
+   - Aggro stabile: chase lento, stop adiacente per colpire
+   - EXP/Level + XP bar (cap 99), coin +2 XP, kill +20 XP, level-up buff
+   - Pozioni: pickup + bottone 🍵 + doppio tap
+   - Save/Load/Reset (localStorage)
 */
 (() => {
-  const BUILD = 'core3f';
+  const BUILD = 'core3g';
   const SAVE_KEY = 'barebones_save_v3';
 
+  // DOM
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
   const statusEl = document.getElementById('status');
@@ -16,7 +20,7 @@
   const btnUsePotion = document.getElementById('btnUsePotion');
 
   // Mappa
-  const COLS = 15, ROWS = 9, TILE = 64;
+  const COLS = 15, ROWS = 9, TILE = 64; // 960x576
   const map = Array.from({length:ROWS}, ()=>Array(COLS).fill(0));
   function genBlocks(){
     for(let i=0;i<22;i++){
@@ -41,15 +45,15 @@
     hp:60,maxHp:60,
     tick:0,
     mode:'patrol', // 'patrol' | 'chase'
-    lastHit:0, hitCd:800, // danno a contatto
+    lastHit:0, hitCd:800, // ms
     atkMin:5, atkMax:9,
     moveTick:0,
-    chaseEvery:2,  // 1 step ogni 2 frame (~240ms)
+    chaseEvery:2,   // muove 1 volta ogni 2 frame (~240ms)
     patrolEvery:8
   };
   const coins=[], potions=[];
 
-  // spawn helpers
+  // Spawn helpers
   function randEmpty(){
     for(let k=0;k<500;k++){
       const x=Math.floor(Math.random()*COLS), y=Math.floor(Math.random()*ROWS);
@@ -59,7 +63,6 @@
     }
     return {x:2,y:2};
   }
-  // iniziali
   for(let i=0;i<6;i++) coins.push(randEmpty());
   for(let i=0;i<2;i++) potions.push(randEmpty());
 
@@ -92,7 +95,7 @@
     ctx.save(); ctx.globalAlpha=.25; ctx.fillStyle='#22c55e'; ctx.fillRect(0,0,cv.width,cv.height); ctx.restore();
   }
 
-  // BFS
+  // BFS pathfinding
   function bfs(sx,sy,tx,ty){
     if(!walkable(tx,ty)) return null;
     const q=[{x:sx,y:sy}], prev=new Map(), seen=new Set([`${sx},${sy}`]);
@@ -113,13 +116,16 @@
     return null;
   }
 
-  // Input (click / doppio-tap / tasti)
+  // Input
   let pathQueue=[];
   let lastTapTs=0;
+
   function canvasToTile(ev){
     const r=cv.getBoundingClientRect();
-    const sx=( (ev.clientX ?? ev.touches?.[0]?.clientX) - r.left)*(cv.width/r.width);
-    const sy=( (ev.clientY ?? ev.touches?.[0]?.clientY) - r.top )*(cv.height/r.height);
+    const cx = (ev.clientX ?? ev.touches?.[0]?.clientX);
+    const cy = (ev.clientY ?? ev.touches?.[0]?.clientY);
+    const sx=(cx - r.left)*(cv.width/r.width);
+    const sy=(cy - r.top )*(cv.height/r.height);
     const tx=clamp(Math.floor(sx/TILE),0,COLS-1);
     const ty=clamp(Math.floor(sy/TILE),0,ROWS-1);
     return {sx,sy,tx,ty};
@@ -127,7 +133,7 @@
   function enemyRect(){ const x=enemy.x*TILE+TILE/2-16, y=enemy.y*TILE+TILE/2-22; return {x,y,w:32,h:36}; }
   function inRect(px,py,r){ return px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h; }
 
-  // Click / tap
+  // Click / tap to move or attack
   cv.addEventListener('click',(ev)=>{
     const {sx,sy,tx,ty}=canvasToTile(ev);
     const now=performance.now();
@@ -141,14 +147,14 @@
     const p=bfs(player.x,player.y,tx,ty); if(p&&p.length) pathQueue=p;
   });
 
-  // Doppio-tap per usare pozione
+  // Double tap = use potion
   cv.addEventListener('pointerdown',(ev)=>{
     const now=performance.now();
     if(now - lastTapTs <= 300){ usePotion(); lastTapTs=0; }
     else { lastTapTs = now; }
   });
 
-  // Tasti
+  // Keys
   window.addEventListener('keydown',(e)=>{
     if(e.code==='Space'||e.key===' '){
       const now=performance.now();
@@ -157,24 +163,25 @@
     if(e.key==='e' || e.key==='E'){ usePotion(); }
   });
 
-  // Bottone flottante (mobile)
+  // Floating button (mobile)
   if(btnUsePotion){
     btnUsePotion.addEventListener('click', usePotion);
     btnUsePotion.addEventListener('touchend', (e)=>{ e.preventDefault(); usePotion(); }, {passive:false});
   }
 
+  // Buttons
   btnReset.addEventListener('click', resetAll);
-  if(btnSave) btnSave.addEventListener('click', saveGame);
-  if(btnLoad) btnLoad.addEventListener('click', loadGame);
+  btnSave?.addEventListener('click', saveGame);
+  btnLoad?.addEventListener('click', loadGame);
 
-  // Combattimento
+  // Combat
   function attackEnemy(){
     const now=performance.now(); player.lastAtk=now;
     const dmg=rndInt(player.atkMin,player.atkMax);
     enemy.hp=Math.max(0,enemy.hp-dmg);
     flashHit(enemy.x,enemy.y);
     if(enemy.hp===0){
-      // drop: 70% moneta, 30% pozione
+      // drop: 70% coin, 30% potion
       if(Math.random()<0.7) coins.push({x:enemy.x,y:enemy.y});
       else potions.push({x:enemy.x,y:enemy.y});
       gainXP(XP_KILL);
@@ -183,18 +190,18 @@
     draw();
   }
 
-  // AI nemico (pacing e stop adiacente)
+  // Enemy AI (stable)
   function enemyAI(){
     const dist = manhattan(enemy, player);
     if(dist<=6) enemy.mode='chase';
     else if(dist>=10) enemy.mode='patrol';
 
     const adj8 = chebyshev(player, enemy)===1;
-    if(adj8){ return; } // adiacente: resta fermo e attacca
+    if(adj8){ return; } // vicino: resta fermo ad attaccare
 
     if(enemy.mode==='chase'){
       enemy.moveTick = (enemy.moveTick + 1) % enemy.chaseEvery;
-      if(enemy.moveTick!==0) return; // rallenta
+      if(enemy.moveTick!==0) return; // muove più lentamente
       const options = [
         {x:enemy.x+1,y:enemy.y},{x:enemy.x-1,y:enemy.y},
         {x:enemy.x,y:enemy.y+1},{x:enemy.x,y:enemy.y-1}
@@ -213,21 +220,21 @@
     }
   }
 
-  // Interazioni & oggetti
+  // Interactions & items
   function handleInteractions(){
-    // monete (+XP)
+    // coins (+XP)
     for(let i=coins.length-1;i>=0;i--){
       if(coins[i].x===player.x&&coins[i].y===player.y){
         coins.splice(i,1); player.coins++; gainXP(XP_COIN);
       }
     }
-    // pozioni → inventario
+    // potions → inventory
     for(let i=potions.length-1;i>=0;i--){
       if(potions[i].x===player.x&&potions[i].y===player.y){
         potions.splice(i,1); player.pots++;
       }
     }
-    // danno a contatto/adiacenza
+    // enemy contact damage (adjacent or same tile)
     const touching=chebyshev(player,enemy)===0;
     const adjacent=chebyshev(player,enemy)===1;
     const now=performance.now();
@@ -245,7 +252,7 @@
     if(player.hp>=player.maxHp) return;
     player.pots--;
     player.hp = Math.min(player.maxHp, player.hp + 35);
-    // flash viola tenue
+    // flash viola
     ctx.save(); ctx.globalAlpha=.20; ctx.fillStyle='#8b5cf6'; ctx.fillRect(0,0,cv.width,cv.height); ctx.restore();
     draw();
   }
@@ -253,51 +260,37 @@
   // Save / Load
   function saveGame(){
     try{
-      const data = {
-        build: BUILD,
-        map,
-        player,
-        enemy,
-        coins,
-        potions
-      };
+      const data = { build: BUILD, map, player, enemy, coins, potions };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
       toast('Salvataggio completato.');
-    }catch(e){
-      console.error(e);
-      alert('Errore nel salvataggio.');
-    }
+    }catch(e){ console.error(e); alert('Errore nel salvataggio.'); }
   }
   function loadGame(){
     try{
       const raw = localStorage.getItem(SAVE_KEY);
       if(!raw) return alert('Nessun salvataggio trovato.');
       const data = JSON.parse(raw);
-      // ripristino sicuro con fallback
+      // map
       if(Array.isArray(data.map) && data.map.length===ROWS){
         for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=data.map[y][x]|0;
       }
+      // player/enemy
       Object.assign(player, data.player || {});
       Object.assign(enemy,  data.enemy  || {});
+      // arrays
       coins.length=0; (data.coins||[]).forEach(c=>coins.push({x:c.x|0, y:c.y|0}));
       potions.length=0; (data.potions||[]).forEach(p=>potions.push({x:p.x|0, y:p.y|0}));
-      // normalizza alcuni campi che potrebbero mancare
+      // normalize
       enemy.moveTick = enemy.moveTick|0;
       enemy.chaseEvery = enemy.chaseEvery||2;
       enemy.patrolEvery = enemy.patrolEvery||8;
       player.lastAtk = player.lastAtk||0;
-      draw();
-      toast('Caricamento completato.');
-    }catch(e){
-      console.error(e);
-      alert('Salvataggio corrotto o non valido.');
-    }
+      draw(); toast('Caricamento completato.');
+    }catch(e){ console.error(e); alert('Salvataggio corrotto o non valido.'); }
   }
-
   function toast(msg){
-    // mini toast testuale in status (senza CSS extra)
     statusEl.textContent = `[${BUILD}] ${msg}`;
-    setTimeout(()=>updateStatus(), 800);
+    setTimeout(()=>updateStatus(), 900);
   }
 
   // Loop
@@ -306,7 +299,7 @@
       const next=pathQueue.shift();
       if(walkable(next.x,next.y) && !(next.x===enemy.x&&next.y===enemy.y)){
         player.x=next.x; player.y=next.y;
-      }else pathQueue=[];
+      } else pathQueue=[];
     }
     enemyAI();
     handleInteractions();
@@ -341,7 +334,7 @@
     drawActor(player.x,player.y,getVar('--player')); drawHpBar(player.x,player.y,player.hp,player.maxHp);
     // XP bar
     drawXpBar();
-    // Banner build
+    // Build banner
     ctx.fillStyle='#ffffffcc'; ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.textBaseline='top';
     ctx.fillText('BUILD '+BUILD, 8, 8+12+12);
 
@@ -399,7 +392,7 @@
   }
   function gameOver(){ alert('Sei stato sconfitto! Resetto la partita.'); resetAll(); }
 
-  // Avvio
+  // Start
   draw();
   setInterval(step,120);
 })();
