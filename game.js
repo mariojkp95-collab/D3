@@ -1,12 +1,11 @@
-/* ===== Barebones RPG — BUILD core3i =====
-   Patch:
-   - Respawn morbido: non perdi LV/EXP/ATK/CD/coins/potions
-   - Nemico 'ranged' attacca anche adiacente (poke a contatto)
-   Mantiene tutto da core3h (melee+ranged, proiettili, XP/LV, pozioni, Save/Load, 🍵).
+/* ===== Barebones RPG — BUILD core3j =====
+   Aggiunge: SISTEMA DI QUEST (UI + progressi + ricompense, persistente)
+   Mantiene: tutto da core3i (respawn morbido, melee+ranged, proiettili, pozioni 🍵, XP/Lv, Save/Load).
 */
 (() => {
-  const BUILD = 'core3i';
+  const BUILD = 'core3j';
   const SAVE_KEY = 'barebones_save_v3';
+  const QUEST_KEY = 'barebones_quests_v1';
 
   // DOM
   const cv = document.getElementById('game');
@@ -16,6 +15,10 @@
   const btnSave  = document.getElementById('btnSave');
   const btnLoad  = document.getElementById('btnLoad');
   const btnUsePotion = document.getElementById('btnUsePotion');
+  const btnQuest = document.getElementById('btnQuest');
+  const questPanel = document.getElementById('questPanel');
+  const questBody = document.getElementById('questBody');
+  const btnQuestClose = document.getElementById('btnQuestClose');
 
   // Mappa
   const COLS = 15, ROWS = 9, TILE = 64; // 960x576
@@ -55,17 +58,17 @@
       type:'ranged',
       x,y, hp:40, maxHp:40,
       tick:0, mode:'patrol',
-      atkCd:1200, lastShot:0, // tiro distanza
+      atkCd:1200, lastShot:0,
       rangeMin:3, rangeMax:8,
       kiteEvery:2, moveTick:0, patrolEvery:10,
-      pokeCd:700, lastPoke:0 // nuovo: colpo a contatto
+      pokeCd:700, lastPoke:0
     };
   }
 
-  // Oggetti
+  // Oggetti e proiettili
   const coins=[], potions=[], projectiles=[];
 
-  // Spawn helpers
+  // Spawn helper
   function randEmpty(){
     for(let k=0;k<800;k++){
       const x=Math.floor(Math.random()*COLS), y=Math.floor(Math.random()*ROWS);
@@ -77,13 +80,13 @@
     }
     return {x:2,y:2};
   }
-  // iniziali
+  // spawn iniziale
   for(let i=0;i<6;i++) coins.push(randEmpty());
   for(let i=0;i<2;i++) potions.push(randEmpty());
   enemies.push(spawnMelee(COLS-2, ROWS-2));
   { const s = randEmpty(); enemies.push(spawnRanged(s.x, s.y)); }
 
-  // Utilità
+  // Utilità base
   const inside=(x,y)=>x>=0&&y>=0&&x<COLS&&y<ROWS;
   const walkable=(x,y)=>inside(x,y)&&map[y][x]===0;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -92,7 +95,7 @@
   const rndInt=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
   const getVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-  // EXP/Level
+  // EXP / Level
   const MAX_LVL=99, XP_COIN=2, XP_KILL_MELEE=20, XP_KILL_RANGED=25;
   const xpNeeded=l=>Math.floor(50*Math.pow(l,1.5));
   function gainXP(n){
@@ -112,7 +115,86 @@
     ctx.save(); ctx.globalAlpha=.25; ctx.fillStyle='#22c55e'; ctx.fillRect(0,0,cv.width,cv.height); ctx.restore();
   }
 
-  // BFS
+  // ===== QUEST SYSTEM =====
+  // stato quest: {id, title, desc, type, target, needed, progress, status: 'active'|'completed'|'claimed', reward:{xp,coins,pots}}
+  const quests = [
+    { id:'q1', title:'Raccogli 10 monete', desc:'Trova e raccogli 10 monete sparse nella mappa.',
+      type:'collect', target:'coins', needed:10, progress:0, status:'active',
+      reward:{xp:50, pots:1} },
+    { id:'q2', title:'Sconfiggi 3 nemici', desc:'Elimina qualsiasi combinazione di nemici.',
+      type:'kill', target:'any', needed:3, progress:0, status:'locked',
+      reward:{xp:80, coins:3} },
+  ];
+  let currentQuest = 0; // indice nell’array
+
+  function questCanAdvance(q){
+    if(q.status!=='active') return false;
+    return q.progress < q.needed;
+  }
+  function questAddProgress(kind, amount=1){
+    const q = quests[currentQuest];
+    if(!q || q.status!=='active') return;
+    if(q.type==='collect' && kind==='coin'){
+      q.progress = Math.min(q.needed, q.progress + amount);
+    } else if(q.type==='kill' && (kind==='kill_any' || (kind==='kill_ranged'&&q.target!=='melee') || (kind==='kill_melee'&&q.target!=='ranged'))){
+      q.progress = Math.min(q.needed, q.progress + amount);
+    }
+    if(q.progress >= q.needed){
+      q.status = 'completed';
+      toast('Quest completata! Riscatta la ricompensa.');
+    }
+    renderQuest();
+  }
+  function claimQuest(){
+    const q = quests[currentQuest];
+    if(!q || q.status!=='completed') return;
+    const rw = q.reward||{};
+    if(rw.xp) gainXP(rw.xp);
+    if(rw.coins) player.coins += rw.coins;
+    if(rw.pots) player.pots += rw.pots;
+    q.status = 'claimed';
+    // sblocca la prossima, se esiste
+    if(currentQuest+1 < quests.length){
+      currentQuest++;
+      const nq = quests[currentQuest];
+      if(nq.status==='locked') nq.status='active';
+      toast('Nuova quest disponibile!');
+    } else {
+      toast('Hai completato tutte le quest disponibili.');
+    }
+    renderQuest();
+  }
+
+  // UI quest
+  function renderQuest(){
+    const q = quests[currentQuest];
+    if(!q){ questBody.innerHTML = '<div class="q-title">Nessuna quest</div>'; return; }
+    const ratio = q.needed>0 ? Math.floor(100*(q.progress/q.needed)) : 100;
+    const rw = q.reward||{};
+    const btnDisabled = q.status!=='completed';
+    questBody.innerHTML = `
+      <div class="q-title">${q.title}</div>
+      <div class="q-desc">${q.desc}</div>
+      <div class="q-row">
+        <div class="progress"><div style="width:${ratio}%"></div></div>
+        <div style="margin-left:8px">${q.progress}/${q.needed}</div>
+      </div>
+      <div class="q-reward">Ricompensa: ${rw.xp?`+${rw.xp} XP `:''}${rw.coins?`· +${rw.coins} monete `:''}${rw.pots?`· +${rw.pots} pozione/i`:''}</div>
+      <button id="btnClaim" class="q-claim" ${btnDisabled?'disabled':''}>Riscatta</button>
+    `;
+    const btnClaim = document.getElementById('btnClaim');
+    if(btnClaim) btnClaim.onclick = claimQuest;
+  }
+  function toggleQuestPanel(forceOpen){
+    const open = typeof forceOpen==='boolean' ? forceOpen : questPanel.classList.contains('hidden');
+    if(open){ questPanel.classList.remove('hidden'); renderQuest(); }
+    else { questPanel.classList.add('hidden'); }
+  }
+
+  btnQuest?.addEventListener('click', ()=>toggleQuestPanel());
+  btnQuestClose?.addEventListener('click', ()=>toggleQuestPanel(false));
+
+  // BFS (pathfinding)
   function bfs(sx,sy,tx,ty){
     if(!walkable(tx,ty)) return null;
     const q=[{x:sx,y:sy}], prev=new Map(), seen=new Set([`${sx},${sy}`]);
@@ -189,10 +271,10 @@
 
   // Buttons
   btnReset.addEventListener('click', hardReset);
-  btnSave?.addEventListener('click', saveGame);
-  btnLoad?.addEventListener('click', loadGame);
+  btnSave?.addEventListener('click', saveAll);
+  btnLoad?.addEventListener('click', loadAll);
 
-  // Combat: player → enemy
+  // Combat (player → enemy)
   function attackEnemy(target){
     const now=performance.now(); player.lastAtk=now;
     const dmg=rndInt(player.atkMin,player.atkMax);
@@ -201,6 +283,7 @@
     if(target.hp===0){
       if(Math.random()<0.7) coins.push({x:target.x,y:target.y});
       else potions.push({x:target.x,y:target.y});
+      questAddProgress(target.type==='ranged' ? 'kill_ranged' : 'kill_melee', 1);
       gainXP(target.type==='ranged' ? XP_KILL_RANGED : XP_KILL_MELEE);
       const idx = enemies.indexOf(target);
       enemies.splice(idx,1);
@@ -255,7 +338,7 @@
         const distM = manhattan(e, player);
         const adj8 = chebyshev(e, player)===1;
 
-        // NEW: poke ravvicinato se adiacente (non serve LoS)
+        // poke ravvicinato
         if(adj8){
           const now = performance.now();
           if(now - e.lastPoke >= e.pokeCd){
@@ -265,10 +348,9 @@
             flashHit(player.x,player.y);
             if(player.hp===0) gameOver();
           }
-          continue; // niente movimento mentre colpisce ravvicinato
+          continue;
         }
 
-        // Tiro a distanza se in range e con LoS
         const inRange = distM>=e.rangeMin && distM<=e.rangeMax && hasLoS(e.x,e.y,player.x,player.y);
         if(inRange){
           const now = performance.now();
@@ -281,7 +363,6 @@
               projectiles.push({x:e.x, y:e.y, dx, dy, spdTick:0, owner:'ranged', dmg:rndInt(6,10)});
             }
           }
-          // kite se troppo vicino
           if(distM < e.rangeMin){
             e.moveTick = (e.moveTick+1)%e.kiteEvery;
             if(e.moveTick===0){
@@ -294,7 +375,6 @@
             }
           }
         } else {
-          // muovi verso riga/colonna del player a scatti
           e.tick = (e.tick+1)%e.patrolEvery;
           if(e.tick===0){
             const dx = Math.sign(player.x - e.x), dy = Math.sign(player.y - e.y);
@@ -340,10 +420,11 @@
         player.x=next.x; player.y=next.y;
       } else pathQueue=[];
     }
-    // coins (+XP)
+    // coins (+XP + quest)
     for(let i=coins.length-1;i>=0;i--){
       if(coins[i].x===player.x&&coins[i].y===player.y){
         coins.splice(i,1); player.coins++; gainXP(XP_COIN);
+        questAddProgress('coin', 1);
       }
     }
     // potions
@@ -377,45 +458,71 @@
     draw();
   }
 
-  // Save / Load (persistiamo anche enemies; NON i proiettili)
-  function saveGame(){
+  // ===== Persistenza =====
+  function saveCore(){
+    return {
+      build: BUILD, map, player, enemies, coins, potions
+    };
+  }
+  function loadCore(data){
+    if(Array.isArray(data.map) && data.map.length===ROWS){
+      for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=data.map[y][x]|0;
+    }
+    Object.assign(player, data.player || {});
+    enemies.length=0;
+    (data.enemies||[]).forEach(e=>{
+      if(e.type==='ranged') enemies.push(Object.assign(spawnRanged(e.x|0,e.y|0), e));
+      else enemies.push(Object.assign(spawnMelee(e.x|0,e.y|0), e));
+    });
+    coins.length=0; (data.coins||[]).forEach(c=>coins.push({x:c.x|0, y:c.y|0}));
+    potions.length=0; (data.potions||[]).forEach(p=>potions.push({x:p.x|0, y:p.y|0}));
+    projectiles.length=0;
+  }
+  function saveQuests(){
+    return { currentQuest, quests };
+  }
+  function loadQuests(qdata){
+    if(!qdata) return;
+    currentQuest = Math.min(qdata.currentQuest|0, quests.length-1);
+    if(Array.isArray(qdata.quests)){
+      // aggiorna progressi e stati compatibilmente con la definizione attuale
+      for(let i=0;i<quests.length && i<qdata.quests.length;i++){
+        const src = qdata.quests[i];
+        quests[i].progress = src.progress|0;
+        quests[i].status = src.status||quests[i].status;
+      }
+    }
+  }
+
+  function saveAll(){
     try{
-      const data = { build: BUILD, map, player, enemies, coins, potions };
-      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveCore()));
+      localStorage.setItem(QUEST_KEY, JSON.stringify(saveQuests()));
       toast('Salvataggio completato.');
     }catch(e){ console.error(e); alert('Errore nel salvataggio.'); }
   }
-  function loadGame(){
+  function loadAll(){
     try{
       const raw = localStorage.getItem(SAVE_KEY);
       if(!raw) return alert('Nessun salvataggio trovato.');
-      const data = JSON.parse(raw);
-      if(Array.isArray(data.map) && data.map.length===ROWS){
-        for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=data.map[y][x]|0;
-      }
-      Object.assign(player, data.player || {});
-      enemies.length=0;
-      (data.enemies||[]).forEach(e=>{
-        if(e.type==='ranged') enemies.push(Object.assign(spawnRanged(e.x|0,e.y|0), e));
-        else enemies.push(Object.assign(spawnMelee(e.x|0,e.y|0), e));
-      });
-      coins.length=0; (data.coins||[]).forEach(c=>coins.push({x:c.x|0, y:c.y|0}));
-      potions.length=0; (data.potions||[]).forEach(p=>potions.push({x:p.x|0, y:p.y|0}));
-      projectiles.length=0;
+      loadCore(JSON.parse(raw));
+      const qr = localStorage.getItem(QUEST_KEY);
+      if(qr) loadQuests(JSON.parse(qr));
       draw(); toast('Caricamento completato.');
+      renderQuest();
     }catch(e){ console.error(e); alert('Salvataggio corrotto o non valido.'); }
   }
+
+  // Toast helper
   function toast(msg){
     statusEl.textContent = `[${BUILD}] ${msg}`;
     setTimeout(()=>updateStatus(), 900);
   }
 
-  // Respawn morbido (no perdita exp/lv)
+  // Respawn morbido (come core3i)
   function softRespawn(){
-    // HP pieni e ritorno allo spawn
     player.hp = player.maxHp;
     player.x = 1; player.y = 1;
-    // svuota proiettili e ricolloca i nemici per sicurezza
     projectiles.length = 0;
     for(let i=0;i<enemies.length;i++){
       const s = randEmpty();
@@ -431,7 +538,6 @@
   function hardReset(){
     for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) map[y][x]=0;
     genBlocks();
-    // reset player TOTALe
     player.x=1;player.y=1;player.hp=player.maxHp=100;player.coins=0;player.pots=0;player.lastAtk=0;
     player.lvl=1; player.exp=0; player.atkMin=6; player.atkMax=12; player.atkCd=400;
     enemies.length=0;
@@ -440,10 +546,15 @@
     coins.length=0; for(let i=0;i<6;i++) coins.push(randEmpty());
     potions.length=0; for(let i=0;i<2;i++) potions.push(randEmpty());
     projectiles.length=0;
-    pathQueue.length=0; draw();
+    // reset quest
+    quests.forEach((q,i)=>{
+      q.progress=0;
+      q.status = (i===0)?'active':'locked';
+    });
+    currentQuest = 0;
+    pathQueue.length=0; draw(); renderQuest();
   }
 
-  // Game over → respawn morbido
   function gameOver(){
     alert('Sei stato sconfitto! Respawn senza perdita di livello/EXP.');
     softRespawn();
@@ -481,8 +592,7 @@
     }
     // enemies
     for(const e of enemies){
-      if(e.type==='ranged') drawActor(e.x,e.y,'#a855f7'); // viola
-      else drawActor(e.x,e.y,getVar('--enemy'));          // rosso
+      if(e.type==='ranged') drawActor(e.x,e.y,'#a855f7'); else drawActor(e.x,e.y,getVar('--enemy'));
       drawHpBar(e.x,e.y,e.hp,e.maxHp);
     }
     // player
@@ -528,9 +638,9 @@
     const need=player.lvl<MAX_LVL?xpNeeded(player.lvl):1;
     const ratio=player.lvl<MAX_LVL?Math.max(0,Math.min(1,player.exp/need)):1;
     ctx.fillStyle='#0b1224aa'; ctx.fillRect(x,y,w,h);
-    ctx.fillStyle='#7c3aed';   ctx.fillRect(x,y,w*ratio,h);
-    ctx.strokeStyle='#1f2a44'; ctx.strokeRect(x,y,w,h);
-    ctx.fillStyle='#e5e7eb'; ctx.font='12px system-ui'; ctx.textAlign='left'; ctx.textBaseline='top';
+    ctx.fillStyle:'#7c3aed';   ctx.fillRect(x,y,w*ratio,h);
+    ctx.strokeStyle:'#1f2a44'; ctx.strokeRect(x,y,w,h);
+    ctx.fillStyle:'#e5e7eb'; ctx.font='12px system-ui'; ctx.textAlign='left'; ctx.textBaseline='top';
     ctx.fillText(`LV ${player.lvl}${player.lvl<MAX_LVL?` — ${Math.floor(ratio*100)}%`:''}`, x, y+h+2);
   }
   function flashHit(tx,ty){
@@ -539,6 +649,7 @@
   }
 
   // Avvio
+  renderQuest(); // prepara UI
   draw();
   setInterval(step,120);
 })();
