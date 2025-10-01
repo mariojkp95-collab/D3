@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Barebones RPG — core3j</title>
-  <link rel="stylesheet" href="style.css?v=core3j">
+  <title>Barebones RPG — core3j-fix1</title>
+  <link rel="stylesheet" href="style.css?v=core3j-fix1">
 </head>
 <body>
   <header>
@@ -31,17 +31,15 @@
   <!-- Bottone flottante (mobile) -->
   <button id="btnUsePotion" class="fab" aria-label="Usa pozione">🍵</button>
 
-  <!-- Pannello Quest -->
+  <!-- Pannello Quest (se lo togli, il gioco continua comunque) -->
   <aside id="questPanel" class="quest hidden" aria-live="polite">
     <div class="q-header">
       <span>Quest</span>
       <button id="btnQuestClose" class="q-close" aria-label="Chiudi">×</button>
     </div>
-    <div id="questBody" class="q-body">
-      <!-- popolato da game.js -->
-    </div>
+    <div id="questBody" class="q-body"></div>
   </aside>
 
-  <script src="game.js?v=core3j"></script>
+  <script src="game.js?v=core3j-fix1"></script>
 </body>
 </html>
