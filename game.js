@@ -1,11 +1,4 @@
-/* ===== Barebones RPG – Step 1: Attacco base + HP =====
-   - Griglia 15x9
-   - Click-to-move (BFS)
-   - 1 nemico con pattugliamento semplice
-   - Monete raccoglibili
-   - Attacco base: premi SPAZIO o clicca il nemico quando sei ADIACENTE
-   - Barre HP disegnate sopra player e nemico
-*/
+/* ===== Barebones RPG – Step 1 FIX: click hit-test + adiacenza 8-dir ===== */
 
 (() => {
   const cv = document.getElementById('game');
@@ -50,6 +43,7 @@
   const walkable = (x,y)=> inside(x,y) && map[y][x]===0;
   const clamp = (v,min,max)=> Math.max(min, Math.min(max, v));
   const manhattan = (a,b)=> Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+  const chebyshev = (a,b)=> Math.max(Math.abs(a.x-b.x), Math.abs(a.y-b.y));
   const randInt = (a,b)=> a + Math.floor(Math.random()*(b-a+1));
 
   // --- BFS
@@ -81,24 +75,43 @@
     const sy = (ev.clientY - r.top ) * (cv.height/r.height);
     const tx = clamp(Math.floor(sx / TILE), 0, COLS-1);
     const ty = clamp(Math.floor(sy / TILE), 0, ROWS-1);
-    return {tx,ty};
+    return {sx,sy,tx,ty};
   }
 
-  // Click: se clicco il nemico ed è adiacente → attacco, altrimenti path
+  // Hit-test preciso sul rettangolo grafico del nemico
+  function enemyRect(){
+    const x = enemy.x*TILE + TILE/2 - 16;
+    const y = enemy.y*TILE + TILE/2 - 22;
+    return {x, y, w:32, h:36};
+  }
+  function pointInRect(px,py, r){ return px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h; }
+
+  // Click:
+  // 1) se clicco “sul nemico” e sono ADIACENTE (8 direzioni) → attacco
+  // 2) altrimenti, se clicco la sua tile ed è adiacente → attacco
+  // 3) altrimenti → pathfinding
   cv.addEventListener('click', (ev)=>{
-    const {tx,ty} = canvasToTile(ev);
-    if(tx===enemy.x && ty===enemy.y && manhattan(player, enemy)===1){
-      attackEnemy();
-      return;
+    const {sx,sy,tx,ty} = canvasToTile(ev);
+    const adj8 = chebyshev(player, enemy)===1;
+
+    // (1) hit-test pixel
+    const r = enemyRect();
+    if(pointInRect(sx,sy,r) && adj8){
+      attackEnemy(); return;
     }
+    // (2) tile-attack fallback
+    if(tx===enemy.x && ty===enemy.y && adj8){
+      attackEnemy(); return;
+    }
+    // (3) movimento
     const p = bfs(player.x, player.y, tx, ty);
     if(p && p.length) pathQueue = p;
   });
 
-  // Tasto SPAZIO: attacco se nemico adiacente
+  // Tasto SPAZIO: attacco se nemico adiacente (8-dir)
   window.addEventListener('keydown', (e)=>{
     if(e.code==='Space' || e.key===' '){
-      if(manhattan(player, enemy)===1) attackEnemy();
+      if(chebyshev(player, enemy)===1) attackEnemy();
     }
   });
 
@@ -109,16 +122,15 @@
     enemy.hp = Math.max(0, enemy.hp - dmg);
     flashHit(enemy.x, enemy.y);
     if(enemy.hp===0){
-      // respawn nemico e droppa 1 moneta
-      const drop = {x:enemy.x, y:enemy.y};
-      coins.push(drop);
+      // droppa 1 moneta e respawna altrove
+      coins.push({x:enemy.x, y:enemy.y});
       const spot = randEmpty();
       enemy.x=spot.x; enemy.y=spot.y; enemy.hp=enemy.maxHp;
     }
     draw();
   }
 
-  // --- Nemico: pattuglia random semplice (niente chase per ora)
+  // --- Nemico: pattuglia random semplice
   function enemyAI(){
     enemy.tick = (enemy.tick+1)%12;
     if(enemy.tick===0){
@@ -144,7 +156,6 @@
 
   // --- Loop
   function step(){
-    // muovi player 1 step/frame
     if(pathQueue.length){
       const next = pathQueue.shift();
       if(walkable(next.x,next.y) && !(next.x===enemy.x && next.y===enemy.y)){
