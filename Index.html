@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Barebones RPG</title>
+  <link rel="stylesheet" href="style.css?v=core1">
+</head>
+<body>
+  <header>
+    <div class="left">
+      <strong>Barebones RPG</strong>
+    </div>
+    <div class="right">
+      <button id="btnReset">Reset</button>
+    </div>
+  </header>
+
+  <main>
+    <canvas id="game" width="960" height="576" aria-label="Gioco"></canvas>
+    <p class="help">Clicca su una casella per muoverti. Raccogli le monete <span class="coin">●</span>. Evita il nemico <span class="enemy">■</span>.</p>
+    <div id="status"></div>
+  </main>
+
+  <script src="game.js?v=core1"></script>
+</body>
+</html>
